@@ -354,7 +354,8 @@ pub unsafe fn dc_chatlist_get_summary<'a>(
                 if (*chat).id == 6i32 as libc::c_uint {
                     (*ret).text2 = dc_strdup(0 as *const libc::c_char)
                 } else if lastmsg.is_null() || (*lastmsg).from_id == 0i32 as libc::c_uint {
-                    (*ret).text2 = dc_stock_str((*chatlist).context, 1i32)
+                    let tmp = to_cstring((*chatlist).context.stock_str(StockId::NoMessages));
+                    (*ret).text2 = dc_strdup(tmp.as_ptr());
                 } else {
                     dc_lot_fill(ret, lastmsg, chat, lastcontact, (*chatlist).context);
                 }

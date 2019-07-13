@@ -8,7 +8,7 @@ use crate::dc_log::*;
 use crate::dc_msg::*;
 use crate::dc_param::*;
 use crate::dc_sqlite3::*;
-use crate::dc_stock::*;
+use crate::dc_stock::StockId;
 use crate::dc_tools::*;
 use crate::types::*;
 use crate::x::*;
@@ -177,22 +177,24 @@ unsafe fn set_from_stmt(mut chat: *mut Chat, row: *mut sqlite3_stmt) -> libc::c_
         (sqlite3_column_int64(row, fresh8) as i64 > time()) as libc::c_int;
     if (*chat).id == 1i32 as libc::c_uint {
         free((*chat).name as *mut libc::c_void);
-        (*chat).name = dc_stock_str((*chat).context, 8i32)
+        let cstring = to_cstring((*chat).context.stock_str(StockId::DeadDrop));
+        (*chat).name = dc_strdup(cstring.as_ptr());
     } else if (*chat).id == 6i32 as libc::c_uint {
         free((*chat).name as *mut libc::c_void);
-        let tempname: *mut libc::c_char = dc_stock_str((*chat).context, 40i32);
+        let tempname = to_cstring((*chat).context.stock_str(StockId::ArchivedChats));
         (*chat).name = dc_mprintf(
             b"%s (%i)\x00" as *const u8 as *const libc::c_char,
-            tempname,
+            tempname.as_ptr(),
             dc_get_archived_cnt((*chat).context),
         );
-        free(tempname as *mut libc::c_void);
     } else if (*chat).id == 5i32 as libc::c_uint {
         free((*chat).name as *mut libc::c_void);
-        (*chat).name = dc_stock_str((*chat).context, 41i32)
+        let name = to_cstring((*chat).context.stock_str(StockId::StarredMsgs));
+        (*chat).name = dc_strdup(name.as_ptr());
     } else if 0 != dc_param_exists((*chat).param, 'K' as i32) {
         free((*chat).name as *mut libc::c_void);
-        (*chat).name = dc_stock_str((*chat).context, 2i32)
+        let name = to_cstring((*chat).context.stock_str(StockId::SelfMsg));
+        (*chat).name = dc_strdup(name.as_ptr());
     }
     row_offset
 }
@@ -1534,14 +1536,14 @@ pub unsafe fn dc_create_group_chat(
     chat_name: *const libc::c_char,
 ) -> uint32_t {
     let mut chat_id: uint32_t = 0i32 as uint32_t;
-    let draft_txt: *mut libc::c_char;
     let mut draft_msg: *mut dc_msg_t = 0 as *mut dc_msg_t;
     let grpid: *mut libc::c_char;
     let stmt: *mut sqlite3_stmt;
     if chat_name.is_null() || *chat_name.offset(0isize) as libc::c_int == 0i32 {
         return 0i32 as uint32_t;
     }
-    draft_txt = dc_stock_str_repl_string(context, 14i32, chat_name);
+    let draft_txt =
+        to_cstring(context.stock_str_repl_string(StockId::NewGroupDraft, as_str(chat_name)));
     grpid = dc_create_id();
     stmt = dc_sqlite3_prepare(
         context,
@@ -1563,13 +1565,12 @@ pub unsafe fn dc_create_group_chat(
         if !(chat_id == 0i32 as libc::c_uint) {
             if !(0 == dc_add_to_chat_contacts_table(context, chat_id, 1i32 as uint32_t)) {
                 draft_msg = dc_msg_new(context, 10i32);
-                dc_msg_set_text(draft_msg, draft_txt);
+                dc_msg_set_text(draft_msg, draft_txt.as_ptr());
                 set_draft_raw(context, chat_id, draft_msg);
             }
         }
     }
     sqlite3_finalize(stmt);
-    free(draft_txt as *mut libc::c_void);
     dc_msg_unref(draft_msg);
     free(grpid as *mut libc::c_void);
     if 0 != chat_id {
@@ -1697,13 +1698,13 @@ pub unsafe fn dc_add_contact_to_chat_ex(
                         _ => {
                             if dc_param_get_int((*chat).param, 'U' as i32, 0i32) == 0i32 {
                                 (*msg).type_0 = 10i32;
-                                (*msg).text = dc_stock_system_msg(
-                                    context,
-                                    17i32,
-                                    (*contact).addr,
-                                    0 as *const libc::c_char,
-                                    1i32 as uint32_t,
-                                );
+                                let tmp = to_cstring(context.stock_system_msg(
+                                    StockId::MsgAddMember,
+                                    as_str((*contact).addr),
+                                    "",
+                                    DC_CONTACT_ID_SELF as u32,
+                                ));
+                                (*msg).text = dc_strdup(tmp.as_ptr());
                                 dc_param_set_int((*msg).param, 'S' as i32, 4i32);
                                 dc_param_set((*msg).param, 'E' as i32, (*contact).addr);
                                 dc_param_set_int((*msg).param, 'F' as i32, flags);
@@ -1828,21 +1829,21 @@ pub unsafe fn dc_remove_contact_from_chat(
                         (*msg).type_0 = 10i32;
                         if (*contact).id == 1i32 as libc::c_uint {
                             dc_set_group_explicitly_left(context, (*chat).grpid);
-                            (*msg).text = dc_stock_system_msg(
-                                context,
-                                19i32,
-                                0 as *const libc::c_char,
-                                0 as *const libc::c_char,
-                                1i32 as uint32_t,
-                            )
+                            let tmp = to_cstring(context.stock_system_msg(
+                                StockId::MsgGroupLeft,
+                                "",
+                                "",
+                                DC_CONTACT_ID_SELF as u32,
+                            ));
+                            (*msg).text = dc_strdup(tmp.as_ptr())
                         } else {
-                            (*msg).text = dc_stock_system_msg(
-                                context,
-                                18i32,
-                                (*contact).addr,
-                                0 as *const libc::c_char,
-                                1i32 as uint32_t,
-                            )
+                            let tmp = to_cstring(context.stock_system_msg(
+                                StockId::MsgDelMember,
+                                as_str((*contact).addr),
+                                "",
+                                DC_CONTACT_ID_SELF as u32,
+                            ));
+                            (*msg).text = dc_strdup(tmp.as_ptr())
                         }
                         dc_param_set_int((*msg).param, 'S' as i32, 5i32);
                         dc_param_set((*msg).param, 'E' as i32, (*contact).addr);
@@ -1945,13 +1946,13 @@ pub unsafe fn dc_set_chat_name(
                 if !(0 == dc_sqlite3_execute(context, &context.sql, q3)) {
                     if dc_param_get_int((*chat).param, 'U' as i32, 0i32) == 0i32 {
                         (*msg).type_0 = 10i32;
-                        (*msg).text = dc_stock_system_msg(
-                            context,
-                            15i32,
-                            (*chat).name,
-                            new_name,
-                            1i32 as uint32_t,
-                        );
+                        let tmp = to_cstring(context.stock_system_msg(
+                            StockId::MsgGrpName,
+                            as_str((*chat).name),
+                            as_str(new_name),
+                            DC_CONTACT_ID_SELF as u32,
+                        ));
+                        (*msg).text = dc_strdup(tmp.as_ptr());
                         dc_param_set_int((*msg).param, 'S' as i32, 2i32);
                         dc_param_set((*msg).param, 'E' as i32, (*chat).name);
                         (*msg).id = dc_send_msg(context, chat_id, msg);
@@ -2021,17 +2022,17 @@ pub unsafe fn dc_set_chat_profile_image(
                                 dc_param_set_int((*msg).param, 'S' as i32, 3i32);
                                 dc_param_set((*msg).param, 'E' as i32, new_image_rel);
                                 (*msg).type_0 = 10i32;
-                                (*msg).text = dc_stock_system_msg(
-                                    context,
+                                let tmp = to_cstring(context.stock_system_msg(
                                     if !new_image_rel.is_null() {
-                                        16i32
+                                        StockId::MsgGrpImgChanged
                                     } else {
-                                        33i32
+                                        StockId::MsgGrpImgDeleted
                                     },
-                                    0 as *const libc::c_char,
-                                    0 as *const libc::c_char,
-                                    1i32 as uint32_t,
-                                );
+                                    "",
+                                    "",
+                                    DC_CONTACT_ID_SELF as u32,
+                                ));
+                                (*msg).text = dc_strdup(tmp.as_ptr());
                                 (*msg).id = dc_send_msg(context, chat_id, msg);
                                 context.call_cb(
                                     Event::MSGS_CHANGED,
@@ -2193,7 +2194,8 @@ pub unsafe fn dc_chat_get_subtitle(chat: *const Chat) -> *mut libc::c_char {
         return dc_strdup(b"Err\x00" as *const u8 as *const libc::c_char);
     }
     if (*chat).type_0 == 100i32 && 0 != dc_param_exists((*chat).param, 'K' as i32) {
-        ret = dc_stock_str((*chat).context, 50i32)
+        let tmp = to_cstring((*chat).context.stock_str(StockId::SelfTalk_SubTitle));
+        ret = dc_strdup(tmp.as_ptr())
     } else if (*chat).type_0 == 100i32 {
         let r: libc::c_int;
         let  stmt: *mut sqlite3_stmt =
@@ -2210,10 +2212,12 @@ pub unsafe fn dc_chat_get_subtitle(chat: *const Chat) -> *mut libc::c_char {
     } else if (*chat).type_0 == 120i32 || (*chat).type_0 == 130i32 {
         let cnt: libc::c_int;
         if (*chat).id == 1i32 as libc::c_uint {
-            ret = dc_stock_str((*chat).context, 8i32)
+            let tmp = to_cstring((*chat).context.stock_str(StockId::DeadDrop));
+            ret = dc_strdup(tmp.as_ptr());
         } else {
             cnt = dc_get_chat_contact_cnt((*chat).context, (*chat).id);
-            ret = dc_stock_str_repl_int((*chat).context, 4i32, cnt)
+            let tmp = to_cstring((*chat).context.stock_str_repl_int(StockId::Member, cnt));
+            ret = dc_strdup(tmp.as_ptr());
         }
     }
     return if !ret.is_null() {

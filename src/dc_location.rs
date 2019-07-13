@@ -46,7 +46,6 @@ pub unsafe fn dc_send_locations_to_chat(
     let mut stmt: *mut sqlite3_stmt = 0 as *mut sqlite3_stmt;
     let now = time();
     let mut msg: *mut dc_msg_t = 0 as *mut dc_msg_t;
-    let mut stock_str: *mut libc::c_char = 0 as *mut libc::c_char;
     let is_sending_locations_before: libc::c_int;
     if !(seconds < 0i32 || chat_id <= 9i32 as libc::c_uint) {
         is_sending_locations_before = dc_is_sending_locations_to_chat(context, chat_id);
@@ -74,24 +73,14 @@ pub unsafe fn dc_send_locations_to_chat(
         sqlite3_step(stmt);
         if 0 != seconds && 0 == is_sending_locations_before {
             msg = dc_msg_new(context, 10i32);
-            (*msg).text = dc_stock_system_msg(
-                context,
-                64i32,
-                0 as *const libc::c_char,
-                0 as *const libc::c_char,
-                0i32 as uint32_t,
-            );
+            let tmp = to_cstring(context.stock_system_msg(StockId::MsgLocationEnabled, "", "", 0));
+            (*msg).text = dc_strdup(tmp.as_ptr());
             dc_param_set_int((*msg).param, 'S' as i32, 8i32);
             dc_send_msg(context, chat_id, msg);
         } else if 0 == seconds && 0 != is_sending_locations_before {
-            stock_str = dc_stock_system_msg(
-                context,
-                65i32,
-                0 as *const libc::c_char,
-                0 as *const libc::c_char,
-                0i32 as uint32_t,
-            );
-            dc_add_device_msg(context, chat_id, stock_str);
+            let stock_str =
+                to_cstring(context.stock_system_msg(StockId::MsgLocationDisabled, "", "", 0));
+            dc_add_device_msg(context, chat_id, stock_str.as_ptr());
         }
         context.call_cb(
             Event::CHAT_MODIFIED,
@@ -109,7 +98,6 @@ pub unsafe fn dc_send_locations_to_chat(
             );
         }
     }
-    free(stock_str as *mut libc::c_void);
     dc_msg_unref(msg);
     sqlite3_finalize(stmt);
 }
@@ -786,7 +774,6 @@ pub unsafe fn dc_job_do_DC_JOB_MAYBE_SEND_LOC_ENDED(context: &Context, job: &mut
     let locations_send_begin: i64;
     let locations_send_until: i64;
     let mut stmt;
-    let mut stock_str: *mut libc::c_char = 0 as *mut libc::c_char;
     stmt = dc_sqlite3_prepare(
         context,
         &context.sql,
@@ -814,14 +801,9 @@ pub unsafe fn dc_job_do_DC_JOB_MAYBE_SEND_LOC_ENDED(context: &Context, job: &mut
                             *const libc::c_char);
                 sqlite3_bind_int(stmt, 1i32, chat_id as libc::c_int);
                 sqlite3_step(stmt);
-                stock_str = dc_stock_system_msg(
-                    context,
-                    65i32,
-                    0 as *const libc::c_char,
-                    0 as *const libc::c_char,
-                    0i32 as uint32_t,
-                );
-                dc_add_device_msg(context, chat_id, stock_str);
+                let stock_str =
+                    to_cstring(context.stock_system_msg(StockId::MsgLocationDisabled, "", "", 0));
+                dc_add_device_msg(context, chat_id, stock_str.as_ptr());
                 context.call_cb(
                     Event::CHAT_MODIFIED,
                     chat_id as uintptr_t,
@@ -831,5 +813,4 @@ pub unsafe fn dc_job_do_DC_JOB_MAYBE_SEND_LOC_ENDED(context: &Context, job: &mut
         }
     }
     sqlite3_finalize(stmt);
-    free(stock_str as *mut libc::c_void);
 }

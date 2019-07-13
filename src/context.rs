@@ -13,6 +13,7 @@ use crate::dc_move::*;
 use crate::dc_msg::*;
 use crate::dc_receive_imf::*;
 use crate::dc_sqlite3::*;
+use crate::dc_stock;
 use crate::dc_stock::*;
 use crate::dc_tools::*;
 use crate::imap::*;
@@ -74,6 +75,120 @@ impl Context {
             unsafe { cb(self, event, data1, data2) }
         } else {
             0
+        }
+    }
+
+    /// Return the stock string for the [dc_stock::StockId].
+    ///
+    /// If the context callback responds with a string to use, e.g. a
+    /// translation, then this string will be returned.  Otherwise a
+    /// default (English) string is returned.
+    pub fn stock_str(&self, id: dc_stock::StockId) -> String {
+        let ptr = self.call_cb(Event::GET_STRING, id as usize, 0) as *mut libc::c_char;
+        if ptr.is_null() {
+            dc_stock::default_string(id)
+        } else {
+            let ret = to_string(ptr);
+            unsafe { free(ptr as *mut libc::c_void) };
+            ret
+        }
+    }
+
+    /// Return stock string, replacing placeholders with provided string.
+    ///
+    /// This replaces both the *first* `%1$s` **and** `%1$d`
+    /// placeholders with the provided string.
+    pub fn stock_str_repl_string<T: AsRef<str>>(
+        &self,
+        id: dc_stock::StockId,
+        insert: T,
+    ) -> String {
+        self.stock_str(id)
+            .replacen("%1$s", insert.as_ref(), 1)
+            .replacen("%1$d", insert.as_ref(), 1)
+    }
+
+    /// Return stock string, replacing placeholders with provided int.
+    ///
+    /// Like [stock_str_repl_string] but substitute the placeholders
+    /// with an integer.
+    pub fn stock_str_repl_int(&self, id: dc_stock::StockId, insert: i32) -> String {
+        self.stock_str_repl_string(id, format!("{}", insert).as_str())
+    }
+
+    /// Return stock string, replacing 2 placeholders with provided string.
+    ///
+    /// This replaces both the *first* `%1$s` **and** `%1$d`
+    /// placeholders with the string in `insert` and does the same for
+    /// `%2$s` and `%2$d` for `insert2`.
+    pub fn stock_str_repl_string2<T: AsRef<str>>(
+        &self,
+        id: dc_stock::StockId,
+        insert: T,
+        insert2: T,
+    ) -> String {
+        self.stock_str(id)
+            .replacen("%1$s", insert.as_ref(), 1)
+            .replacen("%1$d", insert.as_ref(), 1)
+            .replacen("%2$s", insert2.as_ref(), 1)
+            .replacen("%2$d", insert2.as_ref(), 1)
+    }
+
+    /// Return some kind of stock message
+    ///
+    /// If the `id` is [StockId::MsgAddMember] or
+    /// [StockId::MsgDelMember] then `param1` is considered to be the
+    /// contact address and will be replaced by that contact's display
+    /// name.
+    ///
+    /// If `from_id` is not `0`, any trailing dot is removed from the
+    /// first stock string created so far.  If the `from_id` contact is
+    /// the user itself, i.e. `DC_CONTACT_ID_SELF` the string is used
+    /// itself as param to the [StockId::MsgActionByMe] stock string
+    /// resulting in a string like "Member Alice added by me." (for
+    /// [StockId::MsgAddMember] as `id`).  If the `from_id` contact
+    /// is any other user than the contact's display name is looked up and
+    /// used as the second parameter to [StockId::MsgActionByUser] with
+    /// again the original stock string being used as the first parameter,
+    /// resulting in a string like "Member Alice added by Bob.".
+    pub fn stock_system_msg<T: AsRef<str>>(
+        &self,
+        id: dc_stock::StockId,
+        param1: T,
+        param2: T,
+        from_id: u32,
+    ) -> String {
+        let insert1 = if id == StockId::MsgAddMember || id == StockId::MsgDelMember {
+            unsafe {
+                let param1_c = to_cstring(&param1);
+                let contact_id = dc_lookup_contact_id_by_addr(self, param1_c.as_ptr());
+                if contact_id != 0 as libc::c_uint {
+                    let contact = dc_get_contact(self, contact_id);
+                    let displayname = dc_contact_get_name_n_addr(contact);
+                    let ret = to_string(displayname);
+                    free(contact as *mut libc::c_void);
+                    free(displayname as *mut libc::c_void);
+                    ret
+                } else {
+                    param1.as_ref().to_string()
+                }
+            }
+        } else {
+            param1.as_ref().to_string()
+        };
+        let action = self.stock_str_repl_string2(id, insert1, param2.as_ref().to_string());
+        let action1 = action.trim_end_matches('.');
+        match from_id {
+            0 => action,
+            1 => self.stock_str_repl_string(StockId::MsgActionByMe, action1), // DC_CONTACT_ID_SELF
+            _ => unsafe {
+                let contact = dc_get_contact(self, from_id);
+                let displayname = dc_contact_get_display_name(contact);
+                let ret = self.stock_str_repl_string2(StockId::MsgActionByUser, action1, as_str(displayname));
+                free(contact as *mut libc::c_void);
+                free(displayname as *mut libc::c_void);
+                ret
+            },
         }
     }
 }
@@ -385,18 +500,17 @@ pub unsafe fn dc_set_config(
         ret = dc_sqlite3_set_config(context, &context.sql, key, value);
         dc_interrupt_mvbox_idle(context);
     } else if strcmp(key, b"selfstatus\x00" as *const u8 as *const libc::c_char) == 0 {
-        let def = dc_stock_str(context, 13);
+        let def = to_cstring(context.stock_str(StockId::StatusLine));
         ret = dc_sqlite3_set_config(
             context,
             &context.sql,
             key,
-            if value.is_null() || strcmp(value, def) == 0 {
+            if value.is_null() || strcmp(value, def.as_ptr() as *const libc::c_char) == 0 {
                 0 as *const libc::c_char
             } else {
                 value
             },
         );
-        free(def as *mut libc::c_void);
     } else {
         ret = dc_sqlite3_set_config(context, &context.sql, key, value);
     }
@@ -506,7 +620,7 @@ pub unsafe fn dc_get_config(context: &Context, key: *const libc::c_char) -> *mut
         } else if strcmp(key, b"show_emails\x00" as *const u8 as *const libc::c_char) == 0 {
             value = dc_mprintf(b"%i\x00" as *const u8 as *const libc::c_char, 0)
         } else if strcmp(key, b"selfstatus\x00" as *const u8 as *const libc::c_char) == 0 {
-            value = dc_stock_str(context, 13)
+            value = dc_strdup(to_cstring(context.stock_str(StockId::StatusLine)).as_ptr())
         } else {
             value = dc_mprintf(b"\x00" as *const u8 as *const libc::c_char)
         }

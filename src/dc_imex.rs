@@ -285,25 +285,18 @@ pub unsafe extern "C" fn dc_render_setup_file(
                         replacement,
                     );
                     free(replacement as *mut libc::c_void);
-                    let setup_message_title: *mut libc::c_char = dc_stock_str(context, 42i32);
-                    let mut setup_message_body: *mut libc::c_char = dc_stock_str(context, 43i32);
-                    dc_str_replace(
-                        &mut setup_message_body,
-                        b"\r\x00" as *const u8 as *const libc::c_char,
-                        0 as *const libc::c_char,
-                    );
-                    dc_str_replace(
-                        &mut setup_message_body,
-                        b"\n\x00" as *const u8 as *const libc::c_char,
-                        b"<br>\x00" as *const u8 as *const libc::c_char,
-                    );
+                    let setup_message_title =
+                        to_cstring(context.stock_str(StockId::AC_Setup_Msg_Subject));
+                    let setup_message_body = context.stock_str(StockId::AC_Setup_Msg_Body);
+                    let msg_body_head: &str = setup_message_body.split('\r').next().unwrap();
+                    let msg_body_html = msg_body_head.replace("\n", "<br>");
                     ret_setupfilecontent =
                         dc_mprintf(b"<!DOCTYPE html>\r\n<html>\r\n<head>\r\n<title>%s</title>\r\n</head>\r\n<body>\r\n<h1>%s</h1>\r\n<p>%s</p>\r\n<pre>\r\n%s\r\n</pre>\r\n</body>\r\n</html>\r\n\x00"
-                                       as *const u8 as *const libc::c_char,
-                                   setup_message_title, setup_message_title,
-                                   setup_message_body, encr_string);
-                    free(setup_message_title as *mut libc::c_void);
-                    free(setup_message_body as *mut libc::c_void);
+                                   as *const u8 as *const libc::c_char,
+                                   setup_message_title.as_ptr(),
+                                   setup_message_title.as_ptr(),
+                                   to_cstring(msg_body_html).as_ptr(),
+                                   encr_string);
                     free(encr_string as *mut libc::c_void);
                 }
             }

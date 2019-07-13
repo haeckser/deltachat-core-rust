@@ -977,18 +977,12 @@ unsafe fn create_or_lookup_group(
     let mut X_MrAddToGrp: *mut libc::c_char = 0 as *mut libc::c_char;
     let mut X_MrGrpNameChanged: libc::c_int = 0i32;
     let mut X_MrGrpImageChanged: *const libc::c_char = 0 as *const libc::c_char;
-    let mut better_msg: *mut libc::c_char = 0 as *mut libc::c_char;
+    let mut better_msg: String = "".to_string();
     let mut failure_reason: *mut libc::c_char = 0 as *mut libc::c_char;
     if mime_parser.is_system_message == 8i32 {
-        better_msg = dc_stock_system_msg(
-            context,
-            64i32,
-            0 as *const libc::c_char,
-            0 as *const libc::c_char,
-            from_id as uint32_t,
-        )
+        better_msg = context.stock_system_msg(StockId::MsgLocationEnabled, "", "", from_id as u32)
     }
-    set_better_msg(mime_parser, &mut better_msg);
+    set_better_msg(mime_parser, &better_msg);
     /* search the grpid in the header */
     let mut field: *mut mailimf_field;
     let mut optional_field: *mut mailimf_optional_field;
@@ -1067,12 +1061,15 @@ unsafe fn create_or_lookup_group(
                 let left_group: libc::c_int =
                     (dc_lookup_contact_id_by_addr(context, X_MrRemoveFromGrp)
                         == from_id as libc::c_uint) as libc::c_int;
-                better_msg = dc_stock_system_msg(
-                    context,
-                    if 0 != left_group { 19i32 } else { 18i32 },
-                    X_MrRemoveFromGrp,
-                    0 as *const libc::c_char,
-                    from_id as uint32_t,
+                better_msg = context.stock_system_msg(
+                    if 0 != left_group {
+                        StockId::MsgGroupLeft
+                    } else {
+                        StockId::MsgDelMember
+                    },
+                    as_str(X_MrRemoveFromGrp),
+                    "",
+                    from_id as u32,
                 )
             } else {
                 optional_field = dc_mimeparser_lookup_optional_field(
@@ -1089,12 +1086,11 @@ unsafe fn create_or_lookup_group(
                     if !optional_field.is_null() {
                         X_MrGrpImageChanged = (*optional_field).fld_value
                     }
-                    better_msg = dc_stock_system_msg(
-                        context,
-                        17i32,
-                        X_MrAddToGrp,
-                        0 as *const libc::c_char,
-                        from_id as uint32_t,
+                    better_msg = context.stock_system_msg(
+                        StockId::MsgAddMember,
+                        as_str(X_MrAddToGrp),
+                        "",
+                        from_id as u32,
                     )
                 } else {
                     optional_field = dc_mimeparser_lookup_optional_field(
@@ -1104,12 +1100,11 @@ unsafe fn create_or_lookup_group(
                     if !optional_field.is_null() {
                         X_MrGrpNameChanged = 1i32;
                         mime_parser.is_system_message = 2i32;
-                        better_msg = dc_stock_system_msg(
-                            context,
-                            15i32,
-                            (*optional_field).fld_value,
-                            grpname,
-                            from_id as uint32_t,
+                        better_msg = context.stock_system_msg(
+                            StockId::MsgGrpName,
+                            as_str((*optional_field).fld_value),
+                            as_str(grpname),
+                            from_id as u32,
                         )
                     } else {
                         optional_field = dc_mimeparser_lookup_optional_field(
@@ -1119,26 +1114,25 @@ unsafe fn create_or_lookup_group(
                         if !optional_field.is_null() {
                             X_MrGrpImageChanged = (*optional_field).fld_value;
                             mime_parser.is_system_message = 3i32;
-                            better_msg = dc_stock_system_msg(
-                                context,
+                            better_msg = context.stock_system_msg(
                                 if strcmp(
                                     X_MrGrpImageChanged,
                                     b"0\x00" as *const u8 as *const libc::c_char,
                                 ) == 0i32
                                 {
-                                    33i32
+                                    StockId::MsgGrpImgDeleted
                                 } else {
-                                    16i32
+                                    StockId::MsgGrpImgChanged
                                 },
-                                0 as *const libc::c_char,
-                                0 as *const libc::c_char,
-                                from_id as uint32_t,
+                                "",
+                                "",
+                                from_id as u32,
                             )
                         }
                     }
                 }
             }
-            set_better_msg(mime_parser, &mut better_msg);
+            set_better_msg(mime_parser, &better_msg);
             chat_id = dc_get_chat_id_by_grpid(
                 context,
                 grpid,
@@ -1385,7 +1379,6 @@ unsafe fn create_or_lookup_group(
     free(grpid as *mut libc::c_void);
     free(grpname as *mut libc::c_void);
     free(self_addr as *mut libc::c_void);
-    free(better_msg as *mut libc::c_void);
     free(failure_reason as *mut libc::c_void);
     if !ret_chat_id.is_null() {
         *ret_chat_id = chat_id
@@ -1467,11 +1460,11 @@ unsafe fn create_or_lookup_adhoc_group(
                             {
                                 grpname = dc_strdup(mime_parser.subject)
                             } else {
-                                grpname = dc_stock_str_repl_int(
-                                    context,
-                                    4i32,
+                                let tmp = to_cstring(context.stock_str_repl_int(
+                                    StockId::Member,
                                     dc_array_get_cnt(member_ids) as libc::c_int,
-                                )
+                                ));
+                                grpname = dc_strdup(tmp.as_ptr());
                             }
                             chat_id =
                                 create_group_record(context, grpid, grpname, create_blocked, 0i32);
@@ -1814,14 +1807,15 @@ unsafe fn check_verified_properties(
     everythings_okay
 }
 
-unsafe fn set_better_msg(mime_parser: &dc_mimeparser_t, better_msg: *mut *mut libc::c_char) {
-    if !(*better_msg).is_null() && carray_count((*mime_parser).parts) > 0i32 as libc::c_uint {
+unsafe fn set_better_msg<T: AsRef<str>>(mime_parser: &dc_mimeparser_t, better_msg: T) {
+    let msg = better_msg.as_ref();
+    if !msg.len() > 0 && carray_count((*mime_parser).parts) > 0i32 as libc::c_uint {
         let mut part: *mut dc_mimepart_t =
             carray_get(mime_parser.parts, 0i32 as libc::c_uint) as *mut dc_mimepart_t;
         if (*part).type_0 == 10i32 {
             free((*part).msg as *mut libc::c_void);
-            (*part).msg = *better_msg;
-            *better_msg = 0 as *mut libc::c_char
+            let tmp = to_cstring(msg);
+            (*part).msg = dc_strdup(tmp.as_ptr());
         }
     };
 }

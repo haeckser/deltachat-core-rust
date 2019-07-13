@@ -262,7 +262,8 @@ unsafe fn load_from(mut factory: *mut dc_mimefactory_t) {
         0 as *const libc::c_char,
     );
     if (*factory).selfstatus.is_null() {
-        (*factory).selfstatus = dc_stock_str((*factory).context, 13i32)
+        let tmp = to_cstring((*factory).context.stock_str(StockId::StatusLine));
+        (*factory).selfstatus = dc_strdup(tmp.as_ptr());
     };
 }
 
@@ -638,7 +639,8 @@ pub unsafe fn dc_mimefactory_render(mut factory: *mut dc_mimefactory_t) -> libc:
                         strdup(b"v1\x00" as *const u8 as *const libc::c_char),
                     ),
                 );
-                placeholdertext = dc_stock_str((*factory).context, 43i32)
+                let tmp = to_cstring((*factory).context.stock_str(StockId::AC_Setup_Msg_Body));
+                placeholdertext = dc_strdup(tmp.as_ptr());
             }
             if command == 7i32 {
                 let step: *mut libc::c_char =
@@ -942,15 +944,21 @@ pub unsafe fn dc_mimefactory_render(mut factory: *mut dc_mimefactory_t) -> libc:
             );
             mailmime_add_part(message, multipart);
             let p1: *mut libc::c_char;
-            let p2: *mut libc::c_char;
             if 0 != dc_param_get_int((*(*factory).msg).param, 'c' as i32, 0i32) {
-                p1 = dc_stock_str((*factory).context, 24i32)
+                let tmp = to_cstring((*factory).context.stock_str(StockId::EncryptedMsg));
+                p1 = dc_strdup(tmp.as_ptr())
             } else {
                 p1 = dc_msg_get_summarytext((*factory).msg, 32i32)
             }
-            p2 = dc_stock_str_repl_string((*factory).context, 32i32, p1);
-            message_text = dc_mprintf(b"%s\r\n\x00" as *const u8 as *const libc::c_char, p2);
-            free(p2 as *mut libc::c_void);
+            let p2 = to_cstring(
+                (*factory)
+                    .context
+                    .stock_str_repl_string(StockId::ReadRcpt_MailBody, as_str(p1)),
+            );
+            message_text = dc_mprintf(
+                b"%s\r\n\x00" as *const u8 as *const libc::c_char,
+                p2.as_ptr(),
+            );
             free(p1 as *mut libc::c_void);
             let human_mime_part: *mut mailmime = build_body_text(message_text);
             mailmime_add_part(multipart, human_mime_part);
@@ -983,10 +991,11 @@ pub unsafe fn dc_mimefactory_render(mut factory: *mut dc_mimefactory_t) -> libc:
                 if (*factory).loaded as libc::c_uint
                     == DC_MF_MDN_LOADED as libc::c_int as libc::c_uint
                 {
-                    let e: *mut libc::c_char = dc_stock_str((*factory).context, 31i32);
-                    subject_str =
-                        dc_mprintf(b"Chat: %s\x00" as *const u8 as *const libc::c_char, e);
-                    free(e as *mut libc::c_void);
+                    let e = to_cstring((*factory).context.stock_str(StockId::ReadRcpt));
+                    subject_str = dc_mprintf(
+                        b"Chat: %s\x00" as *const u8 as *const libc::c_char,
+                        e.as_ptr(),
+                    );
                 } else {
                     subject_str = get_subject((*factory).chat, (*factory).msg, afwd_email)
                 }
@@ -1070,7 +1079,8 @@ unsafe fn get_subject(
         b"\x00" as *const u8 as *const libc::c_char
     };
     if dc_param_get_int((*msg).param, 'S' as i32, 0i32) == 6i32 {
-        ret = dc_stock_str(context, 42i32)
+        let tmp = to_cstring(context.stock_str(StockId::AC_Setup_Msg_Subject));
+        ret = dc_strdup(tmp.as_ptr())
     } else if (*chat).type_0 == 120i32 || (*chat).type_0 == 130i32 {
         ret = dc_mprintf(
             b"Chat: %s: %s%s\x00" as *const u8 as *const libc::c_char,

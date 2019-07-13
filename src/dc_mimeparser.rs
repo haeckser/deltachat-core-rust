@@ -664,11 +664,16 @@ unsafe fn dc_mimeparser_parse_mime_recursive(
                 40 => {
                     let mut part: *mut dc_mimepart_t = dc_mimepart_new();
                     (*part).type_0 = 10i32;
-                    let msg_body: *mut libc::c_char = dc_stock_str((*mimeparser).context, 29i32);
-                    (*part).msg =
-                        dc_mprintf(b"[%s]\x00" as *const u8 as *const libc::c_char, msg_body);
+                    let msg_body = to_cstring(
+                        (*mimeparser)
+                            .context
+                            .stock_str(StockId::CantDecrypt_Msg_Body),
+                    );
+                    (*part).msg = dc_mprintf(
+                        b"[%s]\x00" as *const u8 as *const libc::c_char,
+                        msg_body.as_ptr(),
+                    );
                     (*part).msg_raw = dc_strdup((*part).msg);
-                    free(msg_body as *mut libc::c_void);
                     carray_add(
                         (*mimeparser).parts,
                         part as *mut libc::c_void,

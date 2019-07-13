@@ -295,7 +295,8 @@ pub unsafe fn dc_contact_load_from_db(
         dc_contact_empty(contact);
         if contact_id == 1i32 as libc::c_uint {
             (*contact).id = contact_id;
-            (*contact).name = dc_stock_str((*contact).context, 2i32);
+            let tmp = to_cstring((*contact).context.stock_str(StockId::SelfMsg));
+            (*contact).name = dc_strdup(tmp.as_ptr());
             (*contact).addr = dc_sqlite3_get_config(
                 (*contact).context,
                 sql,
@@ -615,7 +616,6 @@ pub unsafe fn dc_get_contacts(
     let current_block: u64;
     let self_addr: *mut libc::c_char;
     let mut self_name: *mut libc::c_char = 0 as *mut libc::c_char;
-    let mut self_name2: *mut libc::c_char = 0 as *mut libc::c_char;
     let mut add_self: libc::c_int = 0i32;
     let ret: *mut dc_array_t = dc_array_new(100i32 as size_t);
     let mut s3strLikeCmd: *mut libc::c_char = 0 as *mut libc::c_char;
@@ -665,11 +665,11 @@ pub unsafe fn dc_get_contacts(
                 b"displayname\x00" as *const u8 as *const libc::c_char,
                 b"\x00" as *const u8 as *const libc::c_char,
             );
-            self_name2 = dc_stock_str(context, 2i32);
+            let self_name2 = to_cstring(context.stock_str(StockId::SelfMsg));
             if query.is_null()
                 || 0 != dc_str_contains(self_addr, query)
                 || 0 != dc_str_contains(self_name, query)
-                || 0 != dc_str_contains(self_name2, query)
+                || 0 != dc_str_contains(self_name2.as_ptr(), query)
             {
                 add_self = 1i32
             }
@@ -703,7 +703,6 @@ pub unsafe fn dc_get_contacts(
     sqlite3_free(s3strLikeCmd as *mut libc::c_void);
     free(self_addr as *mut libc::c_void);
     free(self_name as *mut libc::c_void);
-    free(self_name2 as *mut libc::c_void);
 
     ret
 }
@@ -757,7 +756,6 @@ pub unsafe fn dc_get_contact_encrinfo(
     let mut fingerprint_self: *mut libc::c_char = 0 as *mut libc::c_char;
     let mut fingerprint_other_verified: *mut libc::c_char = 0 as *mut libc::c_char;
     let mut fingerprint_other_unverified: *mut libc::c_char = 0 as *mut libc::c_char;
-    let mut p: *mut libc::c_char;
 
     if !(!dc_contact_load_from_db(contact, &context.sql, contact_id)) {
         let peerstate = Peerstate::from_addr(context, &context.sql, as_str((*contact).addr));
@@ -771,23 +769,18 @@ pub unsafe fn dc_get_contact_encrinfo(
 
         if peerstate.is_some() && peerstate.as_ref().and_then(|p| p.peek_key(0)).is_some() {
             let peerstate = peerstate.as_ref().unwrap();
-            p = dc_stock_str(
-                context,
-                if peerstate.prefer_encrypt == EncryptPreference::Mutual {
-                    34i32
-                } else {
-                    25i32
-                },
-            );
-            ret += as_str(p);
-            free(p as *mut libc::c_void);
+            let p = context.stock_str(if peerstate.prefer_encrypt == EncryptPreference::Mutual {
+                StockId::E2E_Preferred
+            } else {
+                StockId::E2E_Available
+            });
+            ret += p.as_str();
             if self_key.is_none() {
                 dc_ensure_secret_key_exists(context);
                 self_key = Key::from_self_public(context, (*loginparam).addr, &context.sql);
             }
-            p = dc_stock_str(context, 30i32);
-            ret += &format!(" {}:", as_str(p));
-            free(p as *mut libc::c_void);
+            let p = context.stock_str(StockId::FingerPrints);
+            ret += &format!(" {}:", p);
 
             fingerprint_self = self_key
                 .map(|k| k.formatted_fingerprint_c())
@@ -832,13 +825,9 @@ pub unsafe fn dc_get_contact_encrinfo(
         } else if 0 == (*loginparam).server_flags & 0x400i32
             && 0 == (*loginparam).server_flags & 0x40000i32
         {
-            p = dc_stock_str(context, 27i32);
-            ret += as_str(p);
-            free(p as *mut libc::c_void);
+            ret += context.stock_str(StockId::Encr_Transp).as_str();
         } else {
-            p = dc_stock_str(context, 28i32);
-            ret += as_str(p);
-            free(p as *mut libc::c_void);
+            ret += context.stock_str(StockId::Encr_None).as_str();
         }
     }
 

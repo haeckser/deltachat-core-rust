@@ -875,22 +875,20 @@ unsafe fn end_bobs_joining(context: &Context, status: libc::c_int) {
 unsafe fn secure_connection_established(context: &Context, contact_chat_id: uint32_t) {
     let contact_id: uint32_t = chat_id_2_contact_id(context, contact_chat_id);
     let contact: *mut dc_contact_t = dc_get_contact(context, contact_id);
-    let msg: *mut libc::c_char = dc_stock_str_repl_string(
-        context,
-        35i32,
+    let msg = to_cstring(context.stock_str_repl_string(
+        StockId::Contact_Verified,
         if !contact.is_null() {
-            (*contact).addr
+            as_str((*contact).addr)
         } else {
-            b"?\x00" as *const u8 as *const libc::c_char
+            "?"
         },
-    );
-    dc_add_device_msg(context, contact_chat_id, msg);
+    ));
+    dc_add_device_msg(context, contact_chat_id, msg.as_ptr());
     context.call_cb(
         Event::CHAT_MODIFIED,
         contact_chat_id as uintptr_t,
         0i32 as uintptr_t,
     );
-    free(msg as *mut libc::c_void);
     dc_contact_unref(contact);
 }
 
@@ -918,24 +916,21 @@ unsafe fn could_not_establish_secure_connection(
 ) {
     let contact_id: uint32_t = chat_id_2_contact_id(context, contact_chat_id);
     let contact = dc_get_contact(context, contact_id);
-    let msg: *mut libc::c_char = dc_stock_str_repl_string(
-        context,
-        36i32,
+    let msg = context.stock_str_repl_string(
+        StockId::Contact_Not_Verified,
         if !contact.is_null() {
-            (*contact).addr
+            as_str((*contact).addr)
         } else {
-            b"?\x00" as *const u8 as *const libc::c_char
+            "?"
         },
     );
-    dc_add_device_msg(context, contact_chat_id, msg);
-    dc_log_error(
+    let msg_c = to_cstring(&msg);
+    dc_add_device_msg(
         context,
-        0i32,
-        b"%s (%s)\x00" as *const u8 as *const libc::c_char,
-        msg,
-        details,
+        contact_chat_id,
+        msg_c.as_ptr(),
     );
-    free(msg as *mut libc::c_void);
+    error!(context, 0, "{} ({})", msg, as_str(details));
     dc_contact_unref(contact);
 }
 
@@ -1046,9 +1041,11 @@ pub unsafe fn dc_handle_degrade_event(context: &Context, peerstate: &Peerstate) 
                 &mut contact_chat_id,
                 0 as *mut libc::c_int,
             );
-            let msg = dc_stock_str_repl_string(context, 37i32, c_addr_ptr);
-            dc_add_device_msg(context, contact_chat_id, msg);
-            free(msg as *mut libc::c_void);
+            let msg = to_cstring(context.stock_str_repl_string(
+                StockId::Contact_Setup_Changed,
+                peerstate.addr.as_ref().unwrap_or(&"".to_string()),
+            ));
+            dc_add_device_msg(context, contact_chat_id, msg.as_ptr());
             context.call_cb(
                 Event::CHAT_MODIFIED,
                 contact_chat_id as uintptr_t,
