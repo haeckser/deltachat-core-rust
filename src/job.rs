@@ -195,7 +195,11 @@ impl Job {
                 warn!(context, "SMTP failed to send: {}", err);
                 smtp.disconnect();
                 self.pending_error = Some(err.to_string());
-                Status::RetryLater
+                if smtp.secs_since_last_success() > 60 {
+                    Status::RetryNow;
+                } else {
+                    Status::RetryLater;
+                }
             }
             Err(crate::smtp::send::Error::EnvelopeError(err)) => {
                 // Local error, job is invalid, do not retry.

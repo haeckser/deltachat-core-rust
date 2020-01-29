@@ -2,7 +2,7 @@
 
 pub mod send;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_smtp::smtp::client::net::*;
 use async_smtp::*;
@@ -53,8 +53,14 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Smtp {
     #[debug_stub(some = "SmtpTransport")]
     transport: Option<smtp::SmtpTransport>,
+
     /// Email address we are sending from.
     from: Option<EmailAddress>,
+
+    /// Timestamp of last successfull send/receive network interaction
+    /// (eg connect or send succeeded). On initialization and disconnect
+    /// it is set to None.
+    last_success: Option<Instant>
 }
 
 impl Smtp {
@@ -68,6 +74,17 @@ impl Smtp {
         if let Some(mut transport) = self.transport.take() {
             async_std::task::block_on(transport.close()).ok();
         }
+        self.last_success = None;
+    }
+
+    /// Return number of seconds since last successful connect/send
+    /// operation.  None indicates that last success time is unknown.
+    pub fn secs_since_last_success(&self) -> Option<u64> {
+        if let Some(last_success) = self.last_success {
+            Some(Instant::now().duration_since(last_success))
+        }
+
+        None
     }
 
     /// Check whether we are connected.
@@ -161,6 +178,7 @@ impl Smtp {
         trans.connect().await.map_err(Error::ConnectionFailure)?;
 
         self.transport = Some(trans);
+        self.last_success = Some(Instant::now());
         context.call_cb(Event::SmtpConnected(format!(
             "SMTP-LOGIN as {} ok",
             lp.send_user,
