@@ -41,17 +41,16 @@ class Account(object):
             lib.dc_context_new(ffi.NULL, as_dc_charpointer(os_name)),
             _destroy_dc_context,
         )
-        if eventlogging:
-            self._evlogger = EventLogger(self._dc_context, logid, debug)
-            deltachat.set_context_callback(self._dc_context, self._process_event)
-            self._threads = IOThreads(self._dc_context, self._evlogger._log_event)
-        else:
-            self._threads = IOThreads(self._dc_context)
 
         if hasattr(db_path, "encode"):
             db_path = db_path.encode("utf8")
         if not lib.dc_open(self._dc_context, db_path, ffi.NULL):
             raise ValueError("Could not dc_open: {}".format(db_path))
+
+        if eventlogging:
+            self._evlogger = EventLogger(self._dc_context, logid, debug)
+            deltachat.set_context_callback(self._dc_context, self._process_event)
+
         self._configkeys = self.get_config("sys.config_keys").split()
         self._imex_events = Queue()
         atexit.register(self.shutdown)
@@ -371,11 +370,8 @@ class Account(object):
         return export_files[0]
 
     def _imex_events_clear(self):
-        try:
-            while True:
-                self._imex_events.get_nowait()
-        except Empty:
-            pass
+        with self._imex_events.mutex:
+            self._imex_events.queue.clear()
 
     def _export(self, path, imex_cmd):
         self._imex_events_clear()
@@ -417,8 +413,6 @@ class Account(object):
         If sending out was unsuccessful, a RuntimeError is raised.
         """
         self.check_is_configured()
-        if not self._threads.is_started():
-            raise RuntimeError("threads not running, can not send out")
         res = lib.dc_initiate_key_transfer(self._dc_context)
         if res == ffi.NULL:
             raise RuntimeError("could not send out autocrypt setup message")
@@ -486,29 +480,19 @@ class Account(object):
         ev = self._evlogger.get_matching("DC_EVENT_INCOMING_MSG")
         return self.get_message_by_id(ev[2])
 
-    def start_threads(self):
-        """ start IMAP/SMTP threads (and configure account if it hasn't happened).
-
-        :raises: ValueError if 'addr' or 'mail_pw' are not configured.
-        :returns: None
-        """
-        if not self.is_configured():
-            self.configure()
-        self._threads.start()
-
-    def stop_threads(self, wait=True):
-        """ stop IMAP/SMTP threads. """
-        if self._threads.is_started():
-            self.stop_ongoing()
-            self._threads.stop(wait=wait)
+    def start_event_thread(self):
+        assert not hasattr(self, "_event_thread")
+        self._event_thread = EventThread(self._dc_context, self._evlogger._log_event)
+        self._event_thread.start()
 
     def shutdown(self, wait=True):
-        """ stop threads and close and remove underlying dc_context and callbacks. """
-        if hasattr(self, "_dc_context") and hasattr(self, "_threads"):
+        """ stop event thread and close and remove underlying dc_context and callbacks. """
+        if hasattr(self, "_dc_context"):
             # print("SHUTDOWN", self)
-            self.stop_threads(wait=False)
+            self.stop_ongoing()
+            if hasattr(self, "_event_thread"):
+                self._event_thread.stop()
             lib.dc_close(self._dc_context)
-            self.stop_threads(wait=wait)  # to wait for threads
             deltachat.clear_context_callback(self._dc_context)
             del self._dc_context
             atexit.unregister(self.shutdown)
@@ -546,37 +530,22 @@ class Account(object):
             raise ValueError("no chat is streaming locations")
 
 
-class IOThreads:
+class EventThread(threading.Thread):
     def __init__(self, dc_context, log_event=lambda *args: None):
+        # assert lib.dc_context_is_open(dc_context), "EventThread requires open context"
         self._dc_context = dc_context
-        self._thread_quitflag = False
-        self._name2thread = {}
         self._log_event = log_event
+        super(EventThread, self).__init__()
+        self.setDaemon(1)
 
-    def is_started(self):
-        return len(self._name2thread) > 0
-
-    def start(self):
-        assert not self.is_started()
-        self._start_one_thread("deltachat", self.dc_thread_run)
-
-    def _start_one_thread(self, name, func):
-        self._name2thread[name] = t = threading.Thread(target=func, name=name)
-        t.setDaemon(1)
-        t.start()
-
-    def stop(self, wait=False):
-        lib.dc_context_shutdown(self._dc_context)
-        if wait:
-            for name, thread in self._name2thread.items():
-                thread.join()
-
-    def dc_thread_run(self):
-        self._log_event("py-bindings-info", 0, "DC THREAD START")
-
+    def run(self):
+        self._log_event("py-bindings-info", 0, "EventThread context_run start")
         lib.dc_context_run(self._dc_context, lib.py_dc_callback)
+        self._log_event("py-bindings-info", 0, "EventThread context_run finish")
 
-        self._log_event("py-bindings-info", 0, "INBOX THREAD FINISHED")
+    def stop(self):
+        lib.dc_context_shutdown(self._dc_context)
+        self.join()
 
 
 class EventLogger:
@@ -645,12 +614,8 @@ class EventLogger:
             self._log(evpart)
 
     def _log(self, msg):
-        t = threading.currentThread()
-        tname = getattr(t, "name", t)
-        if tname == "MainThread":
-            tname = "MAIN"
         with self._loglock:
-            print("{:2.2f} [{}-{}] {}".format(time.time() - self.init_time, tname, self.logid, msg))
+            print("{:2.2f} {} {}".format(time.time() - self.init_time, self.logid, msg))
 
 
 def _destroy_dc_context(dc_context, dc_context_unref=lib.dc_context_unref):

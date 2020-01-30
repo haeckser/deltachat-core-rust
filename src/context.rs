@@ -261,6 +261,7 @@ impl Context {
         job::interrupt_smtp_idle(self);
     }
 
+
     pub fn configure(&self) {
         if self.has_ongoing() {
             warn!(self, "There is already another ongoing process running.");

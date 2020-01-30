@@ -176,7 +176,6 @@ class TestOfflineChat:
         assert d["draft"] == "" if chat.get_draft() is None else chat.get_draft()
 
     def test_group_chat_creation_with_translation(self, ac1):
-        ac1.start_threads()
         ac1.set_stock_translation(const.DC_STR_NEWGROUPDRAFT, "xyz %1$s")
         ac1._evlogger.consume_events()
         with pytest.raises(ValueError):
@@ -196,7 +195,6 @@ class TestOfflineChat:
         assert not chat.is_promoted()
         msg = chat.get_draft()
         assert msg.text == "xyz title1"
-        ac1.stop_threads()
 
     @pytest.mark.parametrize("verified", [True, False])
     def test_group_chat_qr(self, acfactory, ac1, verified):
@@ -336,8 +334,9 @@ class TestOfflineChat:
         with pytest.raises(ValueError):
             ac1.configure(addr="123@example.org")
 
-    def test_import_export_one_contact(self, acfactory, tmpdir):
+    def test_import_export_one_contact(self, acfactory, tmpdir, lp):
         backupdir = tmpdir.mkdir("backup")
+        lp.sec("create account and populate with text and binary message")
         ac1 = acfactory.get_configured_offline_account()
         contact1 = ac1.create_contact("some1@hello.com", name="some1")
         chat = ac1.create_chat_by_contact(contact1)
@@ -353,10 +352,16 @@ class TestOfflineChat:
         assert contact == ac1.get_self_contact()
         assert not backupdir.listdir()
 
+        lp.sec("export account")
         path = ac1.export_all(backupdir.strpath)
         assert os.path.exists(path)
+
+        lp.sec("ac2: import starting")
         ac2 = acfactory.get_unconfigured_account()
+        ac2.start_event_thread()
         ac2.import_all(path)
+
+        lp.sec("ac2: import succeeded")
         contacts = ac2.get_contacts(query="some1")
         assert len(contacts) == 1
         contact2 = contacts[0]
@@ -366,10 +371,6 @@ class TestOfflineChat:
         assert len(messages) == 2
         assert messages[0].text == "msg1"
         assert os.path.exists(messages[1].filename)
-
-    def test_ac_setup_message_fails(self, ac1):
-        with pytest.raises(RuntimeError):
-            ac1.initiate_key_transfer()
 
     def test_set_get_draft(self, chat1):
         msg = Message.new_empty(chat1.account, "text")
@@ -433,7 +434,7 @@ class TestOnlineAccount:
         for x in export_files:
             assert x.startswith(dir.strpath)
         ac1._evlogger.consume_events()
-        ac1.import_self_keys(dir.strpath)
+        ac2.import_self_keys(dir.strpath)
 
     def test_one_account_send_bcc_setting(self, acfactory, lp):
         ac1 = acfactory.get_online_configuring_account()
@@ -1304,7 +1305,6 @@ class TestOnlineConfigureFails:
     def test_invalid_password(self, acfactory):
         ac1, configdict = acfactory.get_online_config()
         ac1.configure(addr=configdict["addr"], mail_pw="123")
-        ac1.start_threads()
         wait_configuration_progress(ac1, 500)
         ev1 = ac1._evlogger.get_matching("DC_EVENT_ERROR_NETWORK")
         assert "cannot login" in ev1[2].lower()
@@ -1313,7 +1313,6 @@ class TestOnlineConfigureFails:
     def test_invalid_user(self, acfactory):
         ac1, configdict = acfactory.get_online_config()
         ac1.configure(addr="x" + configdict["addr"], mail_pw=configdict["mail_pw"])
-        ac1.start_threads()
         wait_configuration_progress(ac1, 500)
         ev1 = ac1._evlogger.get_matching("DC_EVENT_ERROR_NETWORK")
         assert "cannot login" in ev1[2].lower()
@@ -1322,7 +1321,6 @@ class TestOnlineConfigureFails:
     def test_invalid_domain(self, acfactory):
         ac1, configdict = acfactory.get_online_config()
         ac1.configure(addr=configdict["addr"] + "x", mail_pw=configdict["mail_pw"])
-        ac1.start_threads()
         wait_configuration_progress(ac1, 500)
         ev1 = ac1._evlogger.get_matching("DC_EVENT_ERROR_NETWORK")
         assert "could not connect" in ev1[2].lower()

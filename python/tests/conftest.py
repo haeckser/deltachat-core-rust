@@ -116,6 +116,18 @@ def session_liveconfig(request):
             return SessionLiveConfigFromFile(liveconfig_opt)
 
 
+# make sure that accounts are torn down very eagerly
+# as they have a thread asynchronously printing
+# events which would otherwise garble the testrun output
+@pytest.hookimpl(hookwrapper=True)
+def pytest_pyfunc_call(pyfuncitem):
+    outcome = yield
+    for key, arg in pyfuncitem.funcargs.items():
+        if key == "acfactory":
+            arg.finalize()
+    return outcome
+
+
 @pytest.fixture
 def acfactory(pytestconfig, tmpdir, request, session_liveconfig):
 
@@ -154,6 +166,7 @@ def acfactory(pytestconfig, tmpdir, request, session_liveconfig):
             ac.set_config("mail_pw", "123")
             lib.dc_set_config(ac._dc_context, b"configured_mail_pw", b"123")
             lib.dc_set_config(ac._dc_context, b"configured", b"1")
+            ac.start_event_thread()
             return ac
 
         def peek_online_config(self):
@@ -177,12 +190,12 @@ def acfactory(pytestconfig, tmpdir, request, session_liveconfig):
             ac = self.make_account(tmpdb.strpath, logid="ac{}".format(self.live_count))
             ac._evlogger.init_time = self.init_time
             ac._evlogger.set_timeout(30)
+            ac.start_event_thread()
             return ac, dict(configdict)
 
         def get_online_configuring_account(self, mvbox=False, sentbox=False):
             ac, configdict = self.get_online_config()
             ac.configure(**configdict)
-            ac.start_threads()
             return ac
 
         def get_one_online_account(self):
@@ -207,7 +220,7 @@ def acfactory(pytestconfig, tmpdir, request, session_liveconfig):
             ac._evlogger.init_time = self.init_time
             ac._evlogger.set_timeout(30)
             ac.configure(addr=account.get_config("addr"), mail_pw=account.get_config("mail_pw"))
-            ac.start_threads()
+            ac.start_event_thread()
             return ac
 
     am = AccountMaker()
