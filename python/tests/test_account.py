@@ -923,6 +923,7 @@ class TestOnlineAccount:
 
         lp.sec("get fresh empty account")
         ac2 = acfactory.get_unconfigured_account()
+        ac2.start_event_thread()
 
         lp.sec("get latest backup file")
         path2 = ac2.get_latest_backupfile(backupdir.strpath)
